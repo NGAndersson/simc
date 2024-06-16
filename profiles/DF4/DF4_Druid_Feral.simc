@@ -30,7 +30,7 @@ actions.precombat+=/augmentation
 # Snapshot raid buffed stats before combat begins and pre-potting is done.
 actions.precombat+=/snapshot_stats
 actions.precombat+=/cat_form,if=!buff.cat_form.up
-actions.precombat+=/heart_of_the_wild
+actions.precombat+=/heart_of_the_wildz
 actions.precombat+=/use_item,name=algethar_puzzle_box
 actions.precombat+=/prowl,if=!buff.prowl.up
 
