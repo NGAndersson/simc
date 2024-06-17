@@ -1,5 +1,5 @@
 version: "1"
 rules:
   - base: thewarwithin
-    upstream: ngandersson:thewarwithin    # change `wei` to the owner of upstream repo
+    upstream: simulationcraft:thewarwithin    # change `wei` to the owner of upstream repo
     mergeMethod: hardreset
