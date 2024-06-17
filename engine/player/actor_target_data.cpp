@@ -13,6 +13,6 @@ actor_target_data_t::actor_target_data_t( player_t* target, player_t* source ) :
 {
   for (auto & elem : source -> sim -> target_data_initializer)
   {
-    elem( this );
+    elem( this );d
   }
 }
