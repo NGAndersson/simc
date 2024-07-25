@@ -1,4 +1,7 @@
 name: Merge upstream branches
+# Set permissions on GITHUB_TOKEN to allow updates to GitHub Actions workflows
+permissions:
+  actions: write
 on:
   schedule:
      # actually, ~5 minutes is the highest
