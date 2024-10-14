@@ -1524,29 +1524,18 @@ struct meteorite_t final : public arcane_phoenix_spell_t
 {
   action_t* damage_action = nullptr;
   action_t* damage_action_exceptional = nullptr;
-  timespan_t fall_time;
-  timespan_t meteor_delay;
 
   meteorite_t( std::string_view n, arcane_phoenix_pet_t* p, bool exceptional_ = false ) :
-    arcane_phoenix_spell_t( n, p, p->find_spell( 449559 ), exceptional_ ),
-    fall_time( timespan_t::from_seconds( p->find_spell( exceptional_ ? 456137 : 449560 )->missile_speed() ) ),
-    meteor_delay( p->find_spell( 449562 )->duration() )
+    arcane_phoenix_spell_t( n, p, p->find_spell( 449559 ), exceptional_ )
   {
     damage_action = damage_action_exceptional = get_action<meteorite_impact_t>( "meteorite_exceptional_impact", p, true );
     if ( !exceptional )
       damage_action = get_action<meteorite_impact_t>( "meteorite_impact", p );
+    travel_delay = p->find_spell( exceptional_ ? 456137 : 449560 )->missile_speed();
   }
 
   const arcane_phoenix_pet_t* p() const
   { return static_cast<arcane_phoenix_pet_t*>( player ); }
-
-  arcane_phoenix_pet_t* p()
-  { return static_cast<arcane_phoenix_pet_t*>( player ); }
-
-  timespan_t travel_time() const override
-  {
-    return std::max( meteor_delay * p()->cache.spell_cast_speed(), fall_time ) - fall_time;
-  }
 
   void execute() override
   {
@@ -1563,16 +1552,11 @@ struct meteorite_t final : public arcane_phoenix_spell_t
   {
     arcane_phoenix_spell_t::impact( s );
 
-    // The Meteorite fizzles if it does not spawn in the sky before the Arcane Phoenix expires.
+    // Once an instance of the pet has dealt damage with one exceptional Meteorite,
+    // all subsequent regular meteorites it casts will use the exceptional spell ID.
     // TODO: Check this later
-    if ( !p()->is_sleeping() )
-    {
-      // Once an instance of the pet has dealt damage with one exceptional Meteorite,
-      // all subsequent regular meteorites it casts will use the exceptional spell ID.
-      // TODO: Check this later
-      action_t* a = p()->exceptional_meteor_used ? damage_action_exceptional : damage_action;
-      make_event( *sim, fall_time, [ a, t = s->target ] { a->execute_on_target( t ); } );
-    }
+    action_t* a = p()->exceptional_meteor_used ? damage_action_exceptional : damage_action;
+    a->execute_on_target( s->target );
   }
 };
 
@@ -3357,10 +3341,14 @@ struct arcane_orb_t final : public arcane_mage_spell_t
   {
     arcane_mage_spell_t::impact( s );
 
-    int count = as<int>( p()->talents.splintering_orbs->effectN( 4 ).base_value() );
-    int max_count = as<int>( p()->talents.splintering_orbs->effectN( 1 ).base_value() );
-    if ( s->chain_target < max_count / count )
-      p()->trigger_splinter( s->target, count );
+    if ( p()->talents.splintering_orbs.ok() )
+    {
+      int count = as<int>( p()->talents.splintering_orbs->effectN( 4 ).base_value() );
+      int max_count = as<int>( p()->talents.splintering_orbs->effectN( 1 ).base_value() );
+      assert( count > 0 );
+      if ( s->chain_target < max_count / count )
+        p()->trigger_splinter( s->target, count );
+    }
   }
 };
 
@@ -3426,7 +3414,6 @@ struct arcane_barrage_t final : public arcane_mage_spell_t
     }
 
     consume_nether_precision( target );
-    p()->consume_burden_of_power();
     p()->trigger_spellfire_spheres();
     p()->trigger_mana_cascade();
 
@@ -3462,8 +3449,8 @@ struct arcane_barrage_t final : public arcane_mage_spell_t
     if ( s->target->health_percentage() <= p()->talents.arcane_bombardment->effectN( 1 ).base_value() )
       m *= 1.0 + p()->talents.arcane_bombardment->effectN( 2 ).percent() + p()->talents.sunfury_execution->effectN( 1 ).percent();
 
-    if ( p()->buffs.burden_of_power->check() )
-      m *= 1.0 + p()->buffs.burden_of_power->data().effectN( 4 ).percent();
+    if ( p()->buffs.glorious_incandescence->check() )
+      m *= 1.0 + p()->buffs.glorious_incandescence->data().effectN( 2 ).percent();
 
     return m;
   }
@@ -5662,7 +5649,7 @@ struct fire_blast_t final : public fire_mage_spell_t
     fire_mage_spell_t( n, p, p->talents.fire_blast.ok() ? p->talents.fire_blast : p->find_class_spell( "Fire Blast" ) )
   {
     parse_options( options_str );
-    triggers.hot_streak = triggers.kindling = triggers.calefaction = triggers.unleashed_inferno = TT_MAIN_TARGET;
+    triggers.hot_streak = triggers.kindling = triggers.calefaction = triggers.unleashed_inferno = TT_ALL_TARGETS;
     affected_by.unleashed_inferno = triggers.ignite = triggers.from_the_ashes = triggers.overflowing_energy = true;
 
     cooldown->charges += as<int>( p->talents.flame_on->effectN( 1 ).base_value() );
@@ -5679,15 +5666,21 @@ struct fire_blast_t final : public fire_mage_spell_t
     }
   }
 
+  int n_targets() const override
+  {
+    if ( p()->buffs.glorious_incandescence->check() )
+      return as<int>( p()->buffs.glorious_incandescence->data().effectN( 3 ).base_value() );
+    else
+      return fire_mage_spell_t::n_targets();
+  }
+
   void execute() override
   {
     if ( p()->buffs.glorious_incandescence->check() )
-    {
-      p()->buffs.glorious_incandescence->decrement();
       p()->state.trigger_glorious_incandescence = true;
-    }
 
     fire_mage_spell_t::execute();
+    p()->buffs.glorious_incandescence->decrement();
 
     if ( p()->specialization() == MAGE_FIRE )
       p()->trigger_time_manipulation();
@@ -5708,11 +5701,12 @@ struct fire_blast_t final : public fire_mage_spell_t
 
   void impact( action_state_t* s ) override
   {
-    spread_ignite( s->target );
+    if ( s->chain_target == 0 )
+      spread_ignite( s->target );
 
     fire_mage_spell_t::impact( s );
 
-    if ( result_is_hit( s->result ) )
+    if ( result_is_hit( s->result ) && s->chain_target == 0 )
     {
       p()->buffs.feel_the_burn->trigger();
 
@@ -6022,22 +6016,14 @@ struct meteorite_impact_t final : public mage_spell_t
 
 struct meteorite_t final : public mage_spell_t
 {
-  timespan_t meteor_delay;
-
   meteorite_t( std::string_view n, mage_t* p ) :
-    mage_spell_t( n, p, p->find_spell( 449559 ) ),
-    meteor_delay( p->find_spell( 449562 )->duration() )
+    mage_spell_t( n, p, p->find_spell( 449559 ) )
   {
     background = true;
     impact_action = get_action<meteorite_impact_t>( "meteorite_impact", p );
+    travel_delay = p->find_spell( 449560 )->missile_speed();
 
     add_child( impact_action );
-  }
-
-  timespan_t travel_time() const override
-  {
-    // Travel time cannot go lower than 1 second to give time for Meteorite to visually fall.
-    return std::max( meteor_delay * p()->cache.spell_cast_speed(), 1.0_s );
   }
 };
 
@@ -8500,9 +8486,9 @@ void mage_t::create_buffs()
                                    ->set_default_value( find_spell( 448604 )->effectN( specialization() == MAGE_FIRE ? 6 : 1 ).percent() )
                                    ->set_chance( talents.codex_of_the_sunstriders.ok() );
   buffs.mana_cascade           = make_buff( this, "mana_cascade", find_spell( specialization() == MAGE_FIRE ? 449314 : 449322 ) )
-                                   ->set_default_value( specialization() == MAGE_FIRE || bugs
-                                     ? find_spell( 449314 )->effectN( 2 ).base_value() * 0.001
-                                     : find_spell( 449322 )->effectN( 1 ).percent() )
+                                   ->set_default_value_from_effect( 2,  0.001 )
+                                   // TODO: Ignite the Future does not currently allow Mana Cascade to stack beyond 10.
+                                   ->modify_max_stack( bugs ? 0 : as<int>( talents.ignite_the_future->effectN( 1 ).base_value() ) )
                                    ->set_pct_buff_type( STAT_PCT_BUFF_HASTE )
                                    ->set_stack_change_callback( [ this ] ( buff_t*, int, int cur )
                                      {
