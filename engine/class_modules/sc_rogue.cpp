@@ -11882,7 +11882,8 @@ void rogue_t::create_buffs()
   {
     buffs.supercharger.emplace_back( make_buff( this, fmt::format( "supercharge_{}", i + 1 ), talent.rogue.supercharger->ok() ?
                                                 find_spell( supercharger_ids[ i ] ) : spell_data_t::not_found() )
-                                     ->set_default_value( i + 1 ) );
+                                     ->set_default_value( i + 1 )
+                                     ->set_constant_behavior( buff_constant_behavior::NEVER_CONSTANT ) );
   }
 
   // Hero
@@ -13007,6 +13008,11 @@ public:
 
   void register_hotfixes() const override
   {
+    hotfix::register_effect( "Rogue", "2024-10-14", "Nimble Flurry Coefficient is Bugged", 1166349 )
+      .field( "base_value" )
+      .operation( hotfix::HOTFIX_SET )
+      .modifier( 40 )
+      .verification_value( 50 );
   }
 
   void init( player_t* ) const override {}
