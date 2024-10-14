@@ -4232,10 +4232,12 @@ struct kill_shot_t : hunter_ranged_attack_t
     if ( p()->talents.hunters_prey.ok() )
     {
       int active = 0; 
-      active += p()->pets.main->is_active();
-      active += p()->pets.animal_companion->is_active();
+      for ( auto pet : pets::active<pets::hunter_pet_t>( p()->pets.main, p()->pets.animal_companion ) )
+        active += pet->is_active();
+      
       active += as<int>( p()->pets.cotw_stable_pet.n_active_pets() );
       active += as<int>( p()->pets.boo_stable_pet.n_active_pets() );
+
       return 1 + std::min( active, as<int>( p()->talents.hunters_prey_hidden_buff->max_stacks() ) );
     }
 
@@ -4257,10 +4259,12 @@ struct kill_shot_t : hunter_ranged_attack_t
     if ( p()->talents.hunters_prey.ok() )
     {
       int active = 0; 
-      active += p()->pets.main->is_active();
-      active += p()->pets.animal_companion->is_active();
+      for ( auto pet : pets::active<pets::hunter_pet_t>( p()->pets.main, p()->pets.animal_companion ) )
+        active += pet->is_active();
+      
       active += as<int>( p()->pets.cotw_stable_pet.n_active_pets() );
       active += as<int>( p()->pets.boo_stable_pet.n_active_pets() );
+
       am *= 1 + p()->talents.hunters_prey_hidden_buff->effectN( 3 ).percent() * std::min( active, as<int>( p()->talents.hunters_prey_hidden_buff->max_stacks() ) );
     }
 
@@ -5078,8 +5082,8 @@ struct aimed_shot_base_t : public hunter_ranged_attack_t
 
     if( rng().roll( deathblow.chance ) )
     {
-      deathblow.proc -> occur();
-      p() -> buffs.deathblow -> trigger();    
+      deathblow.proc->occur();
+      p()->buffs.deathblow->trigger();    
     }
 
     if( !p()->buffs.wailing_arrow_override->check() )
@@ -5348,7 +5352,7 @@ struct rapid_fire_t: public hunter_spell_t
     p() -> buffs.streamline -> trigger();
     if( rng().roll( deathblow.chance ) )
     {
-      deathblow.proc -> occur();
+      deathblow.proc->occur();
       p()->buffs.deathblow->trigger();    
     }
   }
@@ -6361,12 +6365,19 @@ struct kill_command_t: public hunter_spell_t
 
       wildfire_infusion_reduction = p->talents.wildfire_infusion->effectN( 2 ).time_value();
       bloody_claws_extension      = p->talents.bloody_claws->effectN( 2 ).time_value();
+    }
 
-      if ( p->talents.deathblow.ok() )
+    if ( p->talents.deathblow.ok() )
+    {
+      if ( p->specialization() == HUNTER_SURVIVAL )
       {
         deathblow.chance = p->talents.sic_em.ok() ? p->talents.sic_em->effectN( 4 ).percent() : p->talents.deathblow->effectN( 3 ).percent();
-        deathblow.proc = p->get_proc( "Deathblow" );
       }
+      else 
+      {
+        deathblow.chance = p->talents.deathblow->effectN( 2 ).percent();
+      }
+      deathblow.proc = p->get_proc( "Deathblow" );
     }
 
     if ( p -> talents.dire_command.ok() )
@@ -6437,7 +6448,7 @@ struct kill_command_t: public hunter_spell_t
       }
       if( rng().roll( chance ) )
       {
-        deathblow.proc -> occur();
+        deathblow.proc->occur();
         p()->buffs.deathblow->trigger();
         p()->cooldowns.kill_shot->reset( true );
       }
