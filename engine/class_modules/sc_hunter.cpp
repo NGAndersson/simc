@@ -437,9 +437,10 @@ public:
     buff_t* thrill_of_the_hunt;
     buff_t* dire_beast;
     buff_t* bestial_wrath;
-    buff_t* hunters_prey;
     buff_t* call_of_the_wild;
     buff_t* beast_cleave; 
+    buff_t* serpentine_rhythm;
+    buff_t* serpentine_blessing;
     buff_t* explosive_venom;
     buff_t* a_murder_of_crows;
     buff_t* huntmasters_call; 
@@ -537,6 +538,7 @@ public:
   {
     proc_t* calling_the_shots;
 
+    proc_t* snakeskin_quiver;
     proc_t* wild_call;
     proc_t* wild_instincts;
     proc_t* dire_command;
@@ -683,15 +685,17 @@ public:
     spell_data_ptr_t multishot_bm;
     spell_data_ptr_t laceration;
 
+    spell_data_ptr_t barbed_scales;
+    spell_data_ptr_t snakeskin_quiver;
     spell_data_ptr_t cobra_senses;
-    spell_data_ptr_t improved_kill_command;
     spell_data_ptr_t beast_cleave;
     spell_data_ptr_t wild_call;
     spell_data_ptr_t hunters_prey;
+    spell_data_ptr_t hunters_prey_hidden_buff;
     spell_data_ptr_t venoms_bite;
 
     spell_data_ptr_t stomp;
-    spell_data_ptr_t kindred_spirits;
+    spell_data_ptr_t serpentine_rhythm;
     spell_data_ptr_t kill_cleave;
     spell_data_ptr_t training_expert;
     spell_data_ptr_t dire_beast;
@@ -883,6 +887,7 @@ public:
 
   struct {
     action_t* barbed_shot = nullptr;
+    action_t* snakeskin_quiver = nullptr;
     action_t* dire_command = nullptr;
     action_t* a_murder_of_crows = nullptr;
 
@@ -1153,6 +1158,7 @@ public:
 
     // Beast Mastery Tree passives
     ab::apply_affecting_aura( p -> talents.war_orders );
+    ab::apply_affecting_aura( p -> talents.cobra_senses );
     ab::apply_affecting_aura( p -> talents.savagery );
 
     // Survival Tree passives
@@ -1847,7 +1853,6 @@ struct stable_pet_t : public hunter_pet_t
   {
     double m = hunter_pet_t::composite_player_multiplier( school );
 
-    m *= 1 + o() -> talents.animal_companion -> effectN( 2 ).percent();
     m *= 1 + o() -> talents.training_expert -> effectN( 1 ).percent();
     m *= 1 + o()->buffs.harmonize->check_value();
 
@@ -2101,8 +2106,7 @@ struct hunter_main_pet_t final : public hunter_main_pet_base_t
     hunter_main_pet_base_t::init_base_stats();
 
     resources.base[RESOURCE_HEALTH] = 6373;
-    resources.base[RESOURCE_FOCUS] = 100
-      + o() -> talents.kindred_spirits -> effectN( 1 ).resource( RESOURCE_FOCUS );
+    resources.base[RESOURCE_FOCUS] = 100;
 
     base_gcd = 1.5_s;
 
@@ -2315,7 +2319,6 @@ public:
 
     //Beast Mastery 
     ab::apply_affecting_aura( o() -> talents.savagery );
-    ab::apply_affecting_aura( o() -> talents.improved_kill_command );
 
     //Marksmanship
 
@@ -3585,16 +3588,29 @@ struct auto_shot_t : public auto_attack_base_t<ranged_attack_t>
     }
   };
 
+  double snakeskin_quiver_chance = 0;
   double wild_call_chance = 0;
 
   auto_shot_t( hunter_t* p ) : auto_attack_base_t( "auto_shot", p, p->specs.auto_shot )
   {
-    wild_call_chance = p -> talents.wild_call -> effectN( 1 ).percent();
+    wild_call_chance = p->talents.wild_call->effectN( 1 ).percent();
+    snakeskin_quiver_chance = p->talents.snakeskin_quiver->effectN( 1 ).percent();
   }
 
   action_state_t* new_state() override
   {
     return new state_t( this, target );
+  }
+
+  void execute() override
+  {
+    auto_attack_base_t::execute();
+
+    if ( rng().roll( snakeskin_quiver_chance ) )
+    {
+      p()->procs.snakeskin_quiver->occur();
+      p()->actions.snakeskin_quiver->execute_on_target( target );
+    }
   }
 
   void impact( action_state_t* s ) override
@@ -4174,8 +4190,6 @@ struct kill_shot_t : hunter_ranged_attack_t
     p()->buffs.deathblow->expire();
     p() -> buffs.razor_fragments -> decrement();
 
-    p() -> buffs.hunters_prey -> decrement();
-
     if ( p()->talents.shadow_erasure.ok() && td( target )->dots.black_arrow->is_ticking() &&
          rng().roll( p()->talents.shadow_erasure->proc_chance() ) )
       se_recharge_cooldown->reset( true );
@@ -4213,6 +4227,18 @@ struct kill_shot_t : hunter_ranged_attack_t
     if ( p()->talents.sic_em.ok() && p()->buffs.deathblow->check() )
       return as<int>( p()->talents.sic_em->effectN( 2 ).base_value() );
 
+    //TODO 2024-10-14 There is a bug where only Kill Shots buffed by Deathblow bounce to additional targets.
+    // Needs more testing to determine if damage is affected. 
+    if ( p()->talents.hunters_prey.ok() )
+    {
+      int active = 0; 
+      active += p()->pets.main->is_active();
+      active += p()->pets.animal_companion->is_active();
+      active += as<int>( p()->pets.cotw_stable_pet.n_active_pets() );
+      active += as<int>( p()->pets.boo_stable_pet.n_active_pets() );
+      return 1 + std::min( active, as<int>( p()->talents.hunters_prey_hidden_buff->max_stacks() ) );
+    }
+
     return hunter_ranged_attack_t::n_targets();
   }
 
@@ -4228,6 +4254,15 @@ struct kill_shot_t : hunter_ranged_attack_t
     double am = hunter_ranged_attack_t::action_multiplier();
 
     am *= 1 + p() -> buffs.razor_fragments -> check_value();
+    if ( p()->talents.hunters_prey.ok() )
+    {
+      int active = 0; 
+      active += p()->pets.main->is_active();
+      active += p()->pets.animal_companion->is_active();
+      active += as<int>( p()->pets.cotw_stable_pet.n_active_pets() );
+      active += as<int>( p()->pets.boo_stable_pet.n_active_pets() );
+      am *= 1 + p()->talents.hunters_prey_hidden_buff->effectN( 3 ).percent() * std::min( active, as<int>( p()->talents.hunters_prey_hidden_buff->max_stacks() ) );
+    }
 
     return am;
   }
@@ -4284,7 +4319,7 @@ struct black_arrow_t : public hunter_ranged_attack_t
     if ( p->specialization() == HUNTER_BEAST_MASTERY )
     {
       tick_recharge_cooldown = p->cooldowns.barbed_shot;
-      death_shade_cast_buff = p->buffs.hunters_prey;
+      death_shade_cast_buff = p->buffs.deathblow;
       shadow_lash.cooldown_buff = p->buffs.call_of_the_wild;
     }
 
@@ -4629,7 +4664,7 @@ struct cobra_shot_t: public hunter_ranged_attack_t
 
   cobra_shot_t( hunter_t* p, util::string_view options_str ):
     hunter_ranged_attack_t( "cobra_shot", p, p -> talents.cobra_shot ),
-    kill_command_reduction( -timespan_t::from_seconds( data().effectN( 3 ).base_value() ) + p -> talents.cobra_senses -> effectN( 1 ).time_value() )
+    kill_command_reduction( -timespan_t::from_seconds( data().effectN( 3 ).base_value() ) )
   {
     parse_options( options_str );
   }
@@ -4640,6 +4675,33 @@ struct cobra_shot_t: public hunter_ranged_attack_t
 
     if ( p() -> talents.killer_cobra.ok() && p() -> buffs.bestial_wrath -> check() )
       p() -> cooldowns.kill_command -> reset( true );
+    
+    if ( p()->talents.serpentine_rhythm.ok() )
+    {
+      if( p()->buffs.serpentine_rhythm->at_max_stacks() )
+      {
+        p()->buffs.serpentine_rhythm->expire();
+        p()->buffs.serpentine_blessing->trigger();
+      }
+      else
+      {
+        p()->buffs.serpentine_rhythm->trigger();
+      }
+    }
+
+    if ( p()->talents.barbed_scales.ok() )
+    {
+      p()->cooldowns.barbed_shot->adjust( -p()->talents.barbed_scales->effectN( 1 ).time_value() );
+    }
+  }
+
+  double composite_da_multiplier( const action_state_t* s ) const override
+  {
+    double m = hunter_ranged_attack_t::composite_da_multiplier( s );
+
+    m *= 1.0 + p()->buffs.serpentine_rhythm->check_stack_value();
+
+    return m;
   }
 
   void schedule_travel( action_state_t* s ) override
@@ -4647,6 +4709,18 @@ struct cobra_shot_t: public hunter_ranged_attack_t
     hunter_ranged_attack_t::schedule_travel( s );
 
     p() -> cooldowns.kill_command -> adjust( kill_command_reduction );
+  }
+};
+
+// Cobra Shot (Snakeskin Quiver)
+
+struct cobra_shot_snakeskin_quiver_t: public cobra_shot_t
+{
+  cobra_shot_snakeskin_quiver_t( hunter_t* p ):
+    cobra_shot_t( p, "" )
+  {
+    background = dual = true;
+    base_costs[ RESOURCE_FOCUS ] = 0;
   }
 };
 
@@ -7487,16 +7561,18 @@ void hunter_t::init_spells()
     talents.multishot_bm                      = find_talent_spell( talent_tree::SPECIALIZATION, "Multi-Shot", HUNTER_BEAST_MASTERY );
     talents.laceration                        = find_talent_spell( talent_tree::SPECIALIZATION, "Laceration", HUNTER_BEAST_MASTERY );
 
+    talents.barbed_scales                     = find_talent_spell( talent_tree::SPECIALIZATION, "Barbed Scales", HUNTER_BEAST_MASTERY );
+    talents.snakeskin_quiver                  = find_talent_spell( talent_tree::SPECIALIZATION, "Snakeskin Quiver", HUNTER_BEAST_MASTERY );
     talents.cobra_senses                      = find_talent_spell( talent_tree::SPECIALIZATION, "Cobra Senses", HUNTER_BEAST_MASTERY );
     talents.alpha_predator                    = find_talent_spell( talent_tree::SPECIALIZATION, "Alpha Predator", HUNTER_BEAST_MASTERY );
-    talents.improved_kill_command             = find_talent_spell( talent_tree::SPECIALIZATION, "Improved Kill Command", HUNTER_BEAST_MASTERY );
     talents.beast_cleave                      = find_talent_spell( talent_tree::SPECIALIZATION, "Beast Cleave", HUNTER_BEAST_MASTERY );
     talents.wild_call                         = find_talent_spell( talent_tree::SPECIALIZATION, "Wild Call", HUNTER_BEAST_MASTERY );
     talents.hunters_prey                      = find_talent_spell( talent_tree::SPECIALIZATION, "Hunter's Prey", HUNTER_BEAST_MASTERY );
+    talents.hunters_prey_hidden_buff          = find_spell( 468219 );
     talents.venoms_bite                       = find_talent_spell( talent_tree::SPECIALIZATION, "Venom's Bite", HUNTER_BEAST_MASTERY );
 
     talents.stomp                             = find_talent_spell( talent_tree::SPECIALIZATION, "Stomp", HUNTER_BEAST_MASTERY );
-    talents.kindred_spirits                   = find_talent_spell( talent_tree::SPECIALIZATION, "Kindred Spirits", HUNTER_BEAST_MASTERY );
+    talents.serpentine_rhythm                 = find_talent_spell( talent_tree::SPECIALIZATION, "Serpentine Rhythm", HUNTER_BEAST_MASTERY );
     talents.kill_cleave                       = find_talent_spell( talent_tree::SPECIALIZATION, "Kill Cleave", HUNTER_BEAST_MASTERY );
     talents.training_expert                   = find_talent_spell( talent_tree::SPECIALIZATION, "Training Expert", HUNTER_BEAST_MASTERY );
     talents.dire_beast                        = find_talent_spell( talent_tree::SPECIALIZATION, "Dire Beast", HUNTER_BEAST_MASTERY );
@@ -7741,8 +7817,7 @@ void hunter_t::init_base_stats()
     }
   }
 
-  resources.base[RESOURCE_FOCUS] = 100
-    + talents.kindred_spirits -> effectN( 1 ).resource( RESOURCE_FOCUS );
+  resources.base[RESOURCE_FOCUS] = 100;
 }
 
 void hunter_t::create_actions()
@@ -7779,6 +7854,10 @@ void hunter_t::create_actions()
 
   if ( talents.lunar_storm.ok() )
     actions.lunar_storm = new attacks::lunar_storm_t( this );
+
+  if ( talents.snakeskin_quiver.ok() )
+    actions.snakeskin_quiver = new attacks::cobra_shot_snakeskin_quiver_t( this );
+
 }
 
 void hunter_t::create_buffs()
@@ -7939,10 +8018,6 @@ void hunter_t::create_buffs()
       -> set_cooldown( 0_ms )
       -> set_default_value_from_effect( 1 );
 
-  buffs.hunters_prey =
-    make_buff( this, "hunters_prey", find_spell( 378215 ) )
-      -> set_activated( false );
-
   buffs.call_of_the_wild =
     make_buff( this, "call_of_the_wild", talents.call_of_the_wild )
       -> set_cooldown( 0_ms )
@@ -7981,6 +8056,16 @@ void hunter_t::create_buffs()
   buffs.beast_cleave = 
     make_buff( this, "beast_cleave", find_spell( 268877 ) )
     -> apply_affecting_effect( talents.beast_cleave -> effectN( 2 ) );
+
+  buffs.serpentine_rhythm = 
+    make_buff( this, "serpentine_rhythm", find_spell( 468703 ) )
+    -> set_default_value_from_effect( 1 )
+    -> set_chance( talents.serpentine_rhythm.ok() );
+
+  buffs.serpentine_blessing = 
+    make_buff( this, "serpentine_blessing", find_spell( 468704 ) )
+    -> set_default_value_from_effect( 1 )
+    -> set_chance( talents.serpentine_rhythm.ok() );
 
   buffs.explosive_venom = 
     make_buff( this, "explosive_venom", find_spell( 459689 ) )
@@ -8205,6 +8290,9 @@ void hunter_t::init_procs()
 
   if ( talents.dire_command.ok() )
     procs.dire_command = get_proc( "Dire Command" );
+
+  if ( talents.snakeskin_quiver.ok() )
+    procs.snakeskin_quiver = get_proc( "Snakeskin Quiver" );
 
   if ( talents.wild_call.ok() )
     procs.wild_call = get_proc( "Wild Call" );
@@ -8643,6 +8731,8 @@ double hunter_t::composite_player_pet_damage_multiplier( const action_state_t* s
       m *= 1 + talents.coordinated_assault->effectN( 4 ).percent();
 
     m *= 1 + buffs.summon_hati -> check_value();
+
+    m *= 1 + buffs.serpentine_blessing->check_value();
   }
 
   return m;
