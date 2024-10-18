@@ -361,6 +361,7 @@ struct hunter_td_t: public actor_target_data_t
     dot_t* barbed_shot;
     dot_t* cull_the_herd;
     dot_t* explosive_shot;
+    dot_t* merciless_blow; 
   } dots;
 
   hunter_td_t( player_t* target, hunter_t* p );
@@ -452,13 +453,13 @@ public:
     buff_t* tip_of_the_spear_explosive;
     buff_t* sulfur_lined_pockets;
     buff_t* sulfur_lined_pockets_explosive;
-    buff_t* merciless_blows;
     buff_t* bloodseeker;
     buff_t* aspect_of_the_eagle;
     buff_t* terms_of_engagement;
     buff_t* mongoose_fury;
     buff_t* coordinated_assault;
     buff_t* exposed_flank;
+    buff_t* ruthless_marauder;
     buff_t* relentless_primal_ferocity;
     buff_t* bombardier;
 
@@ -749,19 +750,19 @@ public:
     spell_data_ptr_t sulfur_lined_pockets;
     spell_data_ptr_t butchery;
     spell_data_ptr_t bloody_claws;
-    spell_data_ptr_t terms_of_engagement;
-    spell_data_ptr_t terms_of_engagement_dmg;
-    spell_data_ptr_t terms_of_engagement_buff;
+    spell_data_ptr_t ranger;
 
     spell_data_ptr_t grenade_juggler;
     spell_data_ptr_t flanking_strike;
     spell_data_ptr_t flanking_strike_player;
     spell_data_ptr_t frenzy_strikes;
-    spell_data_ptr_t merciless_blows;
+    spell_data_ptr_t merciless_blow;
     spell_data_ptr_t vipers_venom;
     spell_data_ptr_t bloodseeker;
 
-    spell_data_ptr_t ranger;
+    spell_data_ptr_t terms_of_engagement;
+    spell_data_ptr_t terms_of_engagement_dmg;
+    spell_data_ptr_t terms_of_engagement_buff;
     spell_data_ptr_t exposed_flank;
     spell_data_ptr_t tactical_advantage;
     spell_data_ptr_t sic_em;
@@ -890,6 +891,7 @@ public:
     action_t* snakeskin_quiver = nullptr;
     action_t* dire_command = nullptr;
     action_t* a_murder_of_crows = nullptr;
+    action_t* merciless_blow = nullptr; 
 
     action_t* vicious_hunt = nullptr;
     action_t* cull_the_herd = nullptr;
@@ -1167,10 +1169,11 @@ public:
     ab::apply_affecting_aura( p -> talents.improved_wildfire_bomb );
     ab::apply_affecting_aura( p -> talents.sweeping_spear );
     ab::apply_affecting_aura( p -> talents.tactical_advantage );
+    ab::apply_affecting_aura( p -> talents.grenade_juggler );
     ab::apply_affecting_aura( p -> talents.ranger );
     ab::apply_affecting_aura( p -> talents.explosives_expert );
+    ab::apply_affecting_aura( p -> talents.ruthless_marauder );
     ab::apply_affecting_aura( p -> talents.symbiotic_adrenaline );
-    ab::apply_affecting_aura( p -> talents.grenade_juggler );
     ab::apply_affecting_aura( p -> talents.deadly_duo );
 
     // Set Bonus passives
@@ -1180,6 +1183,7 @@ public:
     // Hero Tree passives
     ab::apply_affecting_aura( p->talents.overshadow );
     ab::apply_affecting_aura( p->talents.sentinel_precision );
+    ab::apply_affecting_aura( p->talents.howl_of_the_pack );
   }
 
   hunter_t* p()             { return static_cast<hunter_t*>( ab::player ); }
@@ -2623,6 +2627,16 @@ struct kill_command_sv_t : public hunter_main_pet_attack_t
     base_multiplier *= 1 + o()->talents.alpha_predator->effectN( 2 ).percent();
   }
 
+  void execute() override
+  {
+    hunter_main_pet_attack_t::execute();
+
+    if ( o()->buffs.exposed_flank->check() && execute_state && execute_state->chain_target>0 )
+    {
+      o()->buffs.tip_of_the_spear->trigger();
+    }
+  }
+
   void impact( action_state_t* s ) override
   {
     hunter_main_pet_attack_t::impact( s );
@@ -2640,6 +2654,8 @@ struct kill_command_sv_t : public hunter_main_pet_attack_t
 
     if ( o()->talents.sentinel.ok() )
       o()->trigger_sentinel( s->target, false, o()->procs.sentinel_stacks );
+
+    o()->buffs.exposed_flank->expire();
   }
   
   void trigger_dot( action_state_t* s ) override
@@ -3348,6 +3364,7 @@ int hunter_t::ticking_dots( hunter_td_t* td )
   dots += hunter_dots.serpent_sting->is_ticking();
   dots += hunter_dots.wildfire_bomb->is_ticking();
   dots += hunter_dots.cull_the_herd->is_ticking();
+  dots += hunter_dots.merciless_blow->is_ticking();
 
   auto pet_dots = pets.main->get_target_data( td->target )->dots;
   dots += pet_dots.bloodshed->is_ticking();
@@ -4501,6 +4518,7 @@ struct symphonic_arsenal_t : hunter_ranged_attack_t
   {
     background = dual = true;
     aoe = as<int>( p->talents.symphonic_arsenal->effectN( 1 ).base_value() );
+    attack_power_mod.direct = p->specialization() == HUNTER_SURVIVAL ? p->talents.symphonic_arsenal_dmg->effectN( 3 ).ap_coeff() : p->talents.symphonic_arsenal_dmg->effectN( 1 ).ap_coeff();
   }
 
   void execute() override
@@ -5640,6 +5658,9 @@ struct melee_focus_spender_t: hunter_melee_attack_t
 
     m *= 1 + p()->buffs.furious_assault->value();
 
+    if (p()->talents.wild_attacks.ok() )
+      m *= 1 + p()->talents.wild_attacks->effectN( 2 ).percent();
+
     return m;
   }
 
@@ -5667,8 +5688,6 @@ struct melee_focus_spender_t: hunter_melee_attack_t
     if ( rng().roll( wildfire_infusion_chance ) )
       p()->cooldowns.kill_command->reset( true );
 
-    p()->buffs.merciless_blows->expire();
-
     if( p()->talents.pack_coordination.ok() && p()->pets.main->buffs.pack_coordination->check() )
     {
       p()->pets.main->active.pack_coordination_ba->execute_on_target( target );
@@ -5694,14 +5713,6 @@ struct melee_focus_spender_t: hunter_melee_attack_t
   {
     const bool has_eagle = p() -> buffs.aspect_of_the_eagle -> check();
     return ( range > 10 ? has_eagle : !has_eagle ) && hunter_melee_attack_t::ready();
-  }
-
-  int n_targets() const override
-  {
-    if ( p()->buffs.merciless_blows->up() )
-      return as<int>( p()->buffs.merciless_blows->check_value() );
-
-    return hunter_melee_attack_t::n_targets();
   }
 };
 
@@ -5899,8 +5910,6 @@ struct butchery_t : public hunter_melee_attack_t
     if ( p()->talents.frenzy_strikes.ok() )
       p()->cooldowns.wildfire_bomb->adjust( -frenzy_strikes.reduction * std::min( num_targets_hit, frenzy_strikes.cap ) );
 
-    p()->buffs.merciless_blows->trigger();
-
     if ( p() -> talents.scattered_prey.ok() ) 
     {
       if( p() -> buffs.scattered_prey -> up() ) 
@@ -5911,6 +5920,11 @@ struct butchery_t : public hunter_melee_attack_t
       {
         p() -> buffs.scattered_prey -> trigger();
       }
+    }
+
+    if ( p()->talents.merciless_blow.ok() )
+    {
+      p()->actions.merciless_blow->execute_on_target( target );
     }
   }
 
@@ -5924,15 +5938,27 @@ struct butchery_t : public hunter_melee_attack_t
   }
 };
 
+// Merciless Blow =================================================================
+
+struct merciless_blow_t : public hunter_melee_attack_t
+{
+  merciless_blow_t( hunter_t* p ):
+    hunter_melee_attack_t( "merciless_blow", p, p -> find_spell( 459870 ) )
+  {
+    background = dual = true;
+  }
+}; 
+
 // Fury of the Eagle ==============================================================
 
 struct fury_of_the_eagle_t : public hunter_melee_attack_t
 {
+  bool procced_at_max_tip = false; 
+
   struct fury_of_the_eagle_tick_t: public hunter_melee_attack_t
   {
     double health_threshold = 0;
     double crit_chance_bonus = 0;
-    timespan_t ruthless_marauder_adjust = 0_ms;
 
     fury_of_the_eagle_tick_t( util::string_view n, hunter_t* p ) : hunter_melee_attack_t( n, p, p->talents.fury_of_the_eagle->effectN( 1 ).trigger() )
     {
@@ -5941,17 +5967,10 @@ struct fury_of_the_eagle_t : public hunter_melee_attack_t
       may_crit = true;
       radius = data().max_range();
       reduced_aoe_targets = p->talents.fury_of_the_eagle->effectN( 5 ).base_value();
-      health_threshold = p -> talents.fury_of_the_eagle -> effectN( 4 ).base_value() + p -> talents.ruthless_marauder -> effectN( 1 ).base_value();
+      health_threshold = p -> talents.fury_of_the_eagle -> effectN( 4 ).base_value();
       crit_chance_bonus = p -> talents.fury_of_the_eagle -> effectN( 3 ).percent();
 
-      // 2-12-22: Ruthless Marauder also adds to crit rate.
-      if ( p -> bugs )
-        crit_chance_bonus += p -> talents.ruthless_marauder -> effectN( 1 ).percent();
-
-      if ( p -> talents.ruthless_marauder )
-        ruthless_marauder_adjust = p -> talents.ruthless_marauder -> effectN( 3 ).time_value();
-
-      // Fury of the Eagle ticks should not decrement Tip of the Spear on execute, but rather on the last tick.
+      // Fury of the Eagle ticks do not decrement Tip of the Spear stacks.
       decrements_tip_of_the_spear = false;
     }
 
@@ -5963,18 +5982,6 @@ struct fury_of_the_eagle_t : public hunter_melee_attack_t
         c += crit_chance_bonus;
 
       return c;
-    }
-
-    void impact( action_state_t* state ) override
-    {
-      hunter_melee_attack_t::impact( state );
-
-      if ( ruthless_marauder_adjust > 0_ms && state -> result == RESULT_CRIT && p() -> cooldowns.ruthless_marauder -> is_ready() )
-      {
-        p() -> cooldowns.wildfire_bomb -> adjust( -ruthless_marauder_adjust );
-        p() -> cooldowns.flanking_strike -> adjust( -ruthless_marauder_adjust );
-        p() -> cooldowns.ruthless_marauder -> start();
-      }
     }
   };
 
@@ -5991,7 +5998,16 @@ struct fury_of_the_eagle_t : public hunter_melee_attack_t
 
     add_child( fote_tick );
 
-    decrements_tip_of_the_spear = false;
+     // Fury of the Eagle in-game decrements on cast, but retains damage bonus for the duration. 
+     //It is easier to keep track of whether it proc'd at max stacks and then decrement/increment at the end.
+     decrements_tip_of_the_spear = false;
+  }
+
+  void execute() override
+  {
+    hunter_melee_attack_t::execute();
+
+    procced_at_max_tip = false;
   }
 
   void tick( dot_t* dot ) override
@@ -5999,6 +6015,15 @@ struct fury_of_the_eagle_t : public hunter_melee_attack_t
     hunter_melee_attack_t::tick( dot );
 
     fote_tick -> execute_on_target( dot -> target );
+
+    if ( p()->talents.ruthless_marauder.ok() && p()->cooldowns.ruthless_marauder->is_ready() && rng().roll( p()->talents.ruthless_marauder->effectN( 1 ).percent() ) )
+    {
+      if ( p()->buffs.tip_of_the_spear->at_max_stacks() )
+        procced_at_max_tip = true;
+      
+      p()->buffs.tip_of_the_spear->trigger();
+      p()->cooldowns.ruthless_marauder->start();
+    }
   }
 
   void last_tick( dot_t* dot ) override
@@ -6007,6 +6032,12 @@ struct fury_of_the_eagle_t : public hunter_melee_attack_t
 
     if ( p()->talents.tip_of_the_spear.ok() )
       p()->buffs.tip_of_the_spear->decrement();
+    
+    if( procced_at_max_tip )
+      p()->buffs.tip_of_the_spear->increment();
+    
+    if( p()->talents.ruthless_marauder )
+      p()->buffs.ruthless_marauder->trigger();
   }
 };
 
@@ -6427,8 +6458,6 @@ struct kill_command_t: public hunter_spell_t
       {
         reset.proc -> occur();
         cooldown -> reset( true );
-
-        p() -> cooldowns.fury_of_the_eagle -> adjust( - p() -> talents.fury_of_the_eagle -> effectN( 2 ).time_value() );
       }
     }
 
@@ -7002,27 +7031,7 @@ struct wildfire_bomb_base_t: public hunter_spell_t
       }
     };
 
-    struct explosive_shot_grenade_juggler_t : public attacks::explosive_shot_background_t
-    {
-      explosive_shot_grenade_juggler_t( util::string_view n, hunter_t* p ) : explosive_shot_background_t( n, p )
-      {
-      }
-
-      void snapshot_internal( action_state_t* s, unsigned flags, result_amount_type rt ) override
-      {
-        explosive_shot_background_t::snapshot_internal( s, flags, rt );
-
-        if ( flags & STATE_EFFECTIVENESS )
-          debug_cast<state_t*>( s )->effectiveness = p()->talents.grenade_juggler->effectN( 5 ).percent();
-      }
-    };
-
     bomb_dot_t* bomb_dot;
-
-    struct {
-      double chance = 0;
-      explosive_shot_grenade_juggler_t* explosive_shot = nullptr;
-    } grenade_juggler;
 
     bomb_damage_t( util::string_view n, hunter_t* p, wildfire_bomb_base_t* a ) : 
       hunter_spell_t( n, p, p->talents.wildfire_bomb_dmg ),
@@ -7040,12 +7049,6 @@ struct wildfire_bomb_base_t: public hunter_spell_t
 
       a->add_child( this );
       a->add_child( bomb_dot );
-
-      if ( p->talents.grenade_juggler.ok() )
-      {
-        grenade_juggler.chance = p->talents.grenade_juggler->effectN( 2 ).percent();
-        grenade_juggler.explosive_shot = p->get_background_action<explosive_shot_grenade_juggler_t>( "explosive_shot_grenade_juggler" );
-      }
     }
 
     void execute() override
@@ -7061,8 +7064,8 @@ struct wildfire_bomb_base_t: public hunter_spell_t
         bomb_dot->execute();
       }
 
-      if ( rng().roll( grenade_juggler.chance ) )
-        grenade_juggler.explosive_shot->execute_on_target( target );
+      if ( rng().roll( p()->talents.grenade_juggler->effectN( 2 ).percent() ) )
+        p()->cooldowns.explosive_shot->reset( true );
 
       if ( p()->cooldowns.lunar_storm->up() )
         p()->trigger_lunar_storm( target );
@@ -7244,6 +7247,7 @@ hunter_td_t::hunter_td_t( player_t* t, hunter_t* p ) : actor_target_data_t( t, p
   dots.barbed_shot = t -> get_dot( "barbed_shot", p );
   dots.cull_the_herd = t -> get_dot( "cull_the_herd", p );
   dots.explosive_shot = t->get_dot( "explosive_shot", p );
+  dots.merciless_blow = t->get_dot( "merciless_blow", p );
 
   t -> register_on_demise_callback( p, [this](player_t*) { target_demise(); } );
 }
@@ -7644,19 +7648,19 @@ void hunter_t::init_spells()
     talents.butchery                          = find_talent_spell( talent_tree::SPECIALIZATION, "Butchery", HUNTER_SURVIVAL );
     talents.bloody_claws                      = find_talent_spell( talent_tree::SPECIALIZATION, "Bloody Claws", HUNTER_SURVIVAL );
     talents.alpha_predator                    = find_talent_spell( talent_tree::SPECIALIZATION, "Alpha Predator", HUNTER_SURVIVAL );
-    talents.terms_of_engagement               = find_talent_spell( talent_tree::SPECIALIZATION, "Terms of Engagement", HUNTER_SURVIVAL );
-    talents.terms_of_engagement_dmg           = talents.terms_of_engagement.ok() ? find_spell( 271625 ) : spell_data_t::not_found();
-    talents.terms_of_engagement_buff          = talents.terms_of_engagement.ok() ? find_spell( 265898 ) : spell_data_t::not_found();
-
+    talents.ranger                            = find_talent_spell( talent_tree::SPECIALIZATION, "Ranger", HUNTER_SURVIVAL );
+    
     talents.grenade_juggler                   = find_talent_spell( talent_tree::SPECIALIZATION, "Grenade Juggler", HUNTER_SURVIVAL );
     talents.flanking_strike                   = find_talent_spell( talent_tree::SPECIALIZATION, "Flanking Strike", HUNTER_SURVIVAL );
     talents.flanking_strike_player            = talents.flanking_strike.ok() ? find_spell( 269752 ) : spell_data_t::not_found();
     talents.frenzy_strikes                    = find_talent_spell( talent_tree::SPECIALIZATION, "Frenzy Strikes", HUNTER_SURVIVAL );
-    talents.merciless_blows                   = find_talent_spell( talent_tree::SPECIALIZATION, "Merciless Blows", HUNTER_SURVIVAL );
+    talents.merciless_blow                    = find_talent_spell( talent_tree::SPECIALIZATION, "Merciless Blow", HUNTER_SURVIVAL );
     talents.vipers_venom                      = find_talent_spell( talent_tree::SPECIALIZATION, "Viper's Venom", HUNTER_SURVIVAL );
     talents.bloodseeker                       = find_talent_spell( talent_tree::SPECIALIZATION, "Bloodseeker", HUNTER_SURVIVAL );
 
-    talents.ranger                            = find_talent_spell( talent_tree::SPECIALIZATION, "Ranger", HUNTER_SURVIVAL );
+    talents.terms_of_engagement               = find_talent_spell( talent_tree::SPECIALIZATION, "Terms of Engagement", HUNTER_SURVIVAL );
+    talents.terms_of_engagement_dmg           = talents.terms_of_engagement.ok() ? find_spell( 271625 ) : spell_data_t::not_found();
+    talents.terms_of_engagement_buff          = talents.terms_of_engagement.ok() ? find_spell( 265898 ) : spell_data_t::not_found();
     talents.exposed_flank                     = find_talent_spell( talent_tree::SPECIALIZATION, "Exposed Flank", HUNTER_SURVIVAL );
     talents.tactical_advantage                = find_talent_spell( talent_tree::SPECIALIZATION, "Tactical Advantage", HUNTER_SURVIVAL );
     talents.sic_em                            = find_talent_spell( talent_tree::SPECIALIZATION, "Sic 'Em", HUNTER_SURVIVAL );
@@ -7868,6 +7872,9 @@ void hunter_t::create_actions()
 
   if ( talents.snakeskin_quiver.ok() )
     actions.snakeskin_quiver = new attacks::cobra_shot_snakeskin_quiver_t( this );
+
+  if ( talents.merciless_blow.ok() )
+    actions.merciless_blow = new attacks::merciless_blow_t( this );
 
 }
 
@@ -8127,10 +8134,6 @@ void hunter_t::create_buffs()
       -> set_default_value_from_effect( 1, 1 / 5.0 )
       -> set_affects_regen( true );
 
-  buffs.merciless_blows = make_buff( this, "merciless_blows", find_spell( 459870 ) )
-      ->set_default_value_from_effect( 1 )
-      ->set_chance( talents.merciless_blows.ok() );
-
   buffs.aspect_of_the_eagle =
     make_buff( this, "aspect_of_the_eagle", find_spell( 186289 ) )
       -> set_cooldown( 0_ms );
@@ -8154,6 +8157,11 @@ void hunter_t::create_buffs()
       }
     } );
 
+  buffs.ruthless_marauder =
+    make_buff( this, "ruthless_marauder", find_spell( 470070 ) )
+      ->set_pct_buff_type( STAT_PCT_BUFF_HASTE )
+      ->set_default_value_from_effect( 1 );
+
   buffs.relentless_primal_ferocity =
     make_buff( this, "relentless_primal_ferocity", talents.relentless_primal_ferocity_buff )
       ->set_default_value_from_effect( 1 )
@@ -8164,7 +8172,7 @@ void hunter_t::create_buffs()
 
   buffs.exposed_flank = 
     make_buff( this, "exposed_flank", find_spell( 459864 ) )
-      ->set_default_value( find_spell( 459864 )->effectN( 1 ).base_value() )
+      ->set_default_value_from_effect( 1 )
       ->set_chance( talents.exposed_flank.ok() );
 
   buffs.bombardier = 
