@@ -4446,8 +4446,8 @@ struct black_arrow_t : public hunter_ranged_attack_t
   {
     return hunter_ranged_attack_t::target_ready( candidate_target ) &&
       ( candidate_target->health_percentage() <= lower_health_threshold_pct
-        || p()->bugs && candidate_target->health_percentage() >= upper_health_threshold_pct
-        || p()->talents.the_bell_tolls.ok() && candidate_target->health_percentage() >= upper_health_threshold_pct
+        || ( p()->bugs && candidate_target->health_percentage() >= upper_health_threshold_pct )
+        || ( p()->talents.the_bell_tolls.ok() && candidate_target->health_percentage() >= upper_health_threshold_pct )
         || p()->buffs.deathblow -> check() );
   }
 };
@@ -5971,6 +5971,16 @@ struct butchery_t : public hunter_melee_attack_t
     {
       p()->actions.merciless_blow->execute_on_target( target );
     }
+  }
+
+  void impact( action_state_t* s ) override
+  {
+    hunter_melee_attack_t::impact( s );
+
+    //Merciless Blow can only be applied to 5 targets from a single Butchery.
+    //This is not present in the spell data anywhere apart from it being the target count where Butchery does reduced damage.
+    if ( p()->talents.merciless_blow.ok() && s->chain_target < p()->talents.butchery->effectN( 3 ).base_value() )
+      p()->actions.merciless_blow->execute_on_target( s->target );
   }
 
   double composite_da_multiplier( const action_state_t* s ) const override
