@@ -2476,6 +2476,11 @@ public:
     {
       p()->buff.flurry->decrement();
     }
+
+    if ( may_proc_flowing_spirits )
+    {
+      p()->trigger_flowing_spirits( execute_state );
+    }
   }
 
   void impact( action_state_t* state ) override
@@ -2489,11 +2494,6 @@ public:
     p()->trigger_windfury_weapon( state );
     p()->trigger_flametongue_weapon( state );
     p()->trigger_hot_hand( state );
-
-    if ( may_proc_flowing_spirits )
-    {
-      p()->trigger_flowing_spirits( state );
-    }
   }
 
   virtual double stormbringer_proc_chance() const
@@ -2805,17 +2805,11 @@ struct shaman_spell_t : public shaman_spell_base_t<spell_t>
       p()->trigger_fusion_of_elements( execute_state );
     }
 
-
     p()->trigger_earthen_rage( execute_state );
-  }
-
-  void impact( action_state_t* state ) override
-  {
-    base_t::impact( state );
 
     if ( may_proc_flowing_spirits )
     {
-      p()->trigger_flowing_spirits( state );
+      p()->trigger_flowing_spirits( execute_state );
     }
   }
 
@@ -9325,6 +9319,13 @@ struct doom_winds_damage_t : public shaman_attack_t
   {
     background = true;
     aoe = -1;
+  }
+
+  void init() override
+  {
+    shaman_attack_t::init();
+
+    may_proc_flametongue = may_proc_stormbringer = may_proc_windfury = false;
   }
 };
 
