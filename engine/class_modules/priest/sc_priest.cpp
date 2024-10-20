@@ -565,7 +565,8 @@ struct halo_spell_t final : public priest_spell_t
 
     if ( p().talents.archon.divine_halo.enabled() && !returning && return_spell )
     {
-      make_event( sim, timespan_t::from_seconds( radius / travel_speed ) - prepull_timespent, [ this ] { return_spell->execute(); } );
+      make_event( sim, timespan_t::from_seconds( radius / travel_speed ) - prepull_timespent,
+                  [ this ] { return_spell->execute(); } );
     }
   }
 };
@@ -687,6 +688,8 @@ struct halo_t final : public priest_spell_t
       _dmg_spell_holy->prepull_timespent    = prepull_timespent;
       _heal_spell_shadow->prepull_timespent = prepull_timespent;
       _dmg_spell_shadow->prepull_timespent  = prepull_timespent;
+
+      cooldown->adjust( -prepull_timespent );
     }
 
     if ( priest().specialization() == PRIEST_SHADOW || priest().buffs.shadow_covenant->check() )
@@ -699,7 +702,7 @@ struct halo_t final : public priest_spell_t
       _heal_spell_holy->execute();
       _dmg_spell_holy->execute();
     }
-    
+
     if ( is_precombat )
     {
       _heal_spell_holy->prepull_timespent   = timespan_t::zero();
@@ -3388,35 +3391,12 @@ void priest_t::init_resources( bool force )
   if ( ( specialization() == PRIEST_SHADOW ) && resources.initial_opt[ RESOURCE_INSANITY ] <= 0 &&
        options.init_insanity )
   {
-    auto halo_insanity         = talents.halo->effectN( 4 ).resource( RESOURCE_INSANITY );
     auto shadow_crash_insanity = talents.shadow.shadow_crash->effectN( 2 ).resource( RESOURCE_INSANITY );
-
-    // Don't let Archon count Halo for pre-pull Insanity purposes
-    if ( talents.archon.power_surge.enabled() )
-    {
-      halo_insanity = 0.0;
-    }
 
     if ( talents.shadow.shadow_crash.enabled() || talents.shadow.shadow_crash_target.enabled() )
     {
-      // One Shadow Crash + One Halo == 16 Insanity
-      if ( talents.halo.enabled() )
-      {
-        resources.initial_opt[ RESOURCE_INSANITY ] = shadow_crash_insanity + halo_insanity;
-      }
-      else
-      {
-        // One Shadow Crash == 6 Insanity
-        resources.initial_opt[ RESOURCE_INSANITY ] = shadow_crash_insanity;
-      }
-    }
-    else
-    {
-      // One Halo == 10 Insanity
-      if ( talents.halo.enabled() )
-      {
-        resources.initial_opt[ RESOURCE_INSANITY ] = halo_insanity;
-      }
+      // One Shadow Crash == 6 Insanity
+      resources.initial_opt[ RESOURCE_INSANITY ] = shadow_crash_insanity;
     }
   }
 
@@ -3435,8 +3415,6 @@ void priest_t::init_finished()
                         ? cooldowns.voidwraith
                         : ( talents.shared.mindbender.enabled() ? cooldowns.mindbender : cooldowns.shadowfiend );
 
-
-  
   /*PRECOMBAT SHENANIGANS
   we do this here so all precombat actions have gone throught init() and init_finished() so if-expr are properly
   parsed and we can adjust travel times accordingly based on subsequent precombat actions that will sucessfully
@@ -3444,7 +3422,7 @@ void priest_t::init_finished()
 
   for ( auto pre = precombat_action_list.begin(); pre != precombat_action_list.end(); pre++ )
   {
-    sim->print_debug( "{} looping through action list. Action: {}", this->name_str, (*pre)->name_str );
+    sim->print_debug( "{} looping through action list. Action: {}", this->name_str, ( *pre )->name_str );
     if ( auto halo = dynamic_cast<actions::spells::halo_t*>( *pre ) )
     {
       sim->print_debug( "{} Halo prepull found.", this->name_str );
@@ -4055,6 +4033,12 @@ void priest_t::combat_begin()
   if ( specialization() == PRIEST_DISCIPLINE )
   {
     buffs.sins_of_the_many->trigger();
+  }
+
+  // Removed on Encounter Start
+  if ( talents.archon.sustained_potency.enabled() )
+  {
+    buffs.sustained_potency->cancel();
   }
 
   if ( talents.twist_of_fate.enabled() )
