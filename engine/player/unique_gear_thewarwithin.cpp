@@ -4884,8 +4884,7 @@ void doperels_calling_rune( special_effect_t& effect )
 {
   auto damage = create_proc_action<generic_proc_t>( "ghostly_ambush", effect, effect.trigger() );
   damage->base_dd_min = damage->base_dd_max = effect.driver()->effectN( 1 ).average( effect );
-  // TODO: currently not implemented in-game
-  // damage->base_multiplier *= role_mult( effect );
+  damage->base_multiplier *= role_mult( effect );
 
   new dbc_proc_callback_t( effect.player, effect );
 }
@@ -4901,7 +4900,7 @@ void burst_of_knowledge( special_effect_t& effect )
 
   auto buff = create_buff<buff_t>( effect.player, effect.driver() )
                   ->set_cooldown( 0_ms )
-                  ->set_expire_callback( [ int_buff ]( buff_t*, int, timespan_t d ) { int_buff->expire(); } );
+                  ->set_expire_callback( [ int_buff ]( buff_t*, int, timespan_t ) { int_buff->expire(); } );
 
   effect.has_use_buff_override = true;
   effect.custom_buff           = buff;
